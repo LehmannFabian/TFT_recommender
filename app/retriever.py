@@ -4,6 +4,7 @@ import re
 
 from app.database import get_connection, get_recommended_comps
 from app.embeddings import create_embedding
+from app.query_router import RetrievalPlan, route_query
 
 
 DEFAULT_MIN_COMP_GAMES = 3
@@ -108,6 +109,22 @@ def unique_by_id(results: list[dict]) -> list[dict]:
     return unique_results
 
 
+def unique_comps(comps: list[dict]) -> list[dict]:
+    seen = set()
+    unique_results = []
+
+    for comp in comps:
+        comp_key = comp["comp_key"]
+
+        if comp_key in seen:
+            continue
+
+        seen.add(comp_key)
+        unique_results.append(comp)
+
+    return unique_results
+
+
 def is_comp_query(query: str) -> bool:
     words = query.lower().replace("?", " ").replace(",", " ").split()
 
@@ -153,18 +170,32 @@ def extract_text_search_terms(query: str) -> list[str]:
     return terms
 
 
+def build_entity_query(query: str, names: list[str]) -> str:
+    if not names:
+        return query
+
+    return " ".join([query, *names])
+
+
 def create_query_embedding(query: str) -> list[float]:
 
     return create_embedding(query)
 
 
-def retrieve_champions(query: str, limit: int = 5) -> list[dict]:
+def retrieve_champions(
+    query: str,
+    limit: int = 5,
+    names: list[str] | None = None,
+    search_terms: list[str] | None = None,
+) -> list[dict]:
     """
     Retrieve relevant champions using exact text matches plus vector search.
     """
 
-    query_embedding = create_query_embedding(query)
-    search_terms = extract_text_search_terms(query)
+    names = names or []
+    query_embedding = create_query_embedding(build_entity_query(query, names))
+    search_terms = search_terms or extract_text_search_terms(query)
+    search_terms = [*names, *search_terms]
     search_patterns = [
         f"%{term}%"
         for term in search_terms
@@ -302,13 +333,20 @@ def retrieve_patch_notes(query: str, limit: int = 5) -> list[dict]:
 
     return results
 
-def retrieve_items(query: str, limit: int = 5) -> list[dict]:
+def retrieve_items(
+    query: str,
+    limit: int = 5,
+    names: list[str] | None = None,
+    search_terms: list[str] | None = None,
+) -> list[dict]:
     """
     Retrieve relevant items using exact text matches plus vector search.
     """
 
-    query_embedding = create_query_embedding(query)
-    search_terms = extract_text_search_terms(query)
+    names = names or []
+    query_embedding = create_query_embedding(build_entity_query(query, names))
+    search_terms = search_terms or extract_text_search_terms(query)
+    search_terms = [*names, *search_terms]
     search_patterns = [
         f"%{term}%"
         for term in search_terms
@@ -404,6 +442,8 @@ def retrieve_comps(
     limit: int = 5,
     force: bool = False,
     allow_fallback: bool = True,
+    search_terms: list[str] | None = None,
+    min_games: int = DEFAULT_MIN_COMP_GAMES,
 ) -> list[dict]:
     """
     Retrieve top comp stats for comp recommendation questions.
@@ -412,13 +452,21 @@ def retrieve_comps(
     if not force and not is_comp_query(query):
         return []
 
-    search_terms = extract_comp_search_terms(query)
+    if search_terms is None:
+        search_terms = extract_comp_search_terms(query)
+
     comps = []
 
-    for min_games in (DEFAULT_MIN_COMP_GAMES, 2, 1):
+    min_games_options = [
+        value
+        for value in (min_games, 2, 1)
+        if value <= min_games
+    ]
+
+    for min_games_option in min_games_options:
         comps = get_recommended_comps(
             limit=limit,
-            min_games=min_games,
+            min_games=min_games_option,
             search_terms=search_terms,
         )
 
@@ -432,10 +480,10 @@ def retrieve_comps(
         }
         fallback_comps = []
 
-        for min_games in (DEFAULT_MIN_COMP_GAMES, 2, 1):
+        for min_games_option in min_games_options:
             fallback_comps = get_recommended_comps(
                 limit=limit,
-                min_games=min_games,
+                min_games=min_games_option,
             )
 
             if fallback_comps:
@@ -451,8 +499,25 @@ def retrieve_comps(
             if len(comps) >= limit:
                 break
 
-    return comps
+    return unique_comps(comps)[:limit]
 
+
+
+def build_comp_terms(plan: RetrievalPlan) -> list[str]:
+    terms = []
+
+    for name in [*plan.champion_names, *plan.item_names]:
+        terms.extend(extract_comp_search_terms(name))
+
+    terms.extend(plan.search_terms)
+
+    unique_terms = []
+
+    for term in terms:
+        if term not in unique_terms:
+            unique_terms.append(term)
+
+    return unique_terms
 
 
 def retrieve_context(query: str, limit: int = 5) -> list[dict]:
@@ -460,24 +525,47 @@ def retrieve_context(query: str, limit: int = 5) -> list[dict]:
     Retrieve relevant context from multiple tables.
     """
 
-    comp_query = is_comp_query(query)
-    item_query = is_item_query(query)
-    comp_results = retrieve_comps(
-        query,
-        limit=limit,
-        force=comp_query or item_query,
-        allow_fallback=comp_query,
-    )
-    champion_results = retrieve_champions(query, limit=limit)
-    item_results = retrieve_items(query, limit=limit)
-    patch_results = retrieve_patch_notes(query, limit=limit)
+    plan = route_query(query)
+    comp_results = []
+    champion_results = []
+    item_results = []
+    patch_results = []
+
+    if "comps" in plan.sources:
+        comp_results = retrieve_comps(
+            query,
+            limit=limit,
+            force=True,
+            allow_fallback=plan.intent == "comp_recommendation",
+            search_terms=build_comp_terms(plan),
+            min_games=plan.min_games,
+        )
+
+    if "champions" in plan.sources:
+        champion_results = retrieve_champions(
+            query,
+            limit=limit,
+            names=plan.champion_names,
+            search_terms=plan.search_terms,
+        )
+
+    if "items" in plan.sources:
+        item_results = retrieve_items(
+            query,
+            limit=limit,
+            names=plan.item_names,
+            search_terms=plan.search_terms,
+        )
+
+    if "patch_notes" in plan.sources:
+        patch_results = retrieve_patch_notes(query, limit=limit)
 
     has_exact_champion = any(
         item["distance"] <= -100
         for item in champion_results
     )
 
-    if has_exact_champion and not item_query and not comp_query:
+    if has_exact_champion and plan.intent == "champion_info":
         item_results = [
             item
             for item in item_results
@@ -503,10 +591,44 @@ def retrieve_context(query: str, limit: int = 5) -> list[dict]:
         item["source_type"] = "item"
         results.append(item)
 
+    source_priority_by_intent = {
+        "champion_info": {
+            "champion": 0,
+            "item": 1,
+            "comp": 2,
+            "patch_note": 3,
+        },
+        "item_info": {
+            "item": 0,
+            "champion": 1,
+            "comp": 2,
+            "patch_note": 3,
+        },
+        "comp_recommendation": {
+            "comp": 0,
+            "champion": 1,
+            "item": 2,
+            "patch_note": 3,
+        },
+        "item_recommendation": {
+            "comp": 0,
+            "champion": 1,
+            "item": 2,
+            "patch_note": 3,
+        },
+        "general": {
+            "champion": 0,
+            "item": 1,
+            "patch_note": 2,
+            "comp": 3,
+        },
+    }
+    source_priority = source_priority_by_intent[plan.intent]
+
     return sorted(
         results,
         key=lambda x: (
+            source_priority.get(x["source_type"], 99),
             x["distance"],
-            x["source_type"],
         )
     )[:limit]

@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>TFT Recommender</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">Teamfight Tactics</p>
+          <h1>TFT Recommender</h1>
+        </div>
+        <div class="status-pill" id="apiStatus">Checking API</div>
+      </header>
+
+      <section class="workspace">
+        <aside class="side-panel">
+          <div class="panel-head">
+            <h2>Data</h2>
+            <span id="loadState">Ready</span>
+          </div>
+
+          <div class="actions" id="adminActions" hidden>
+            <button type="button" data-action="champions">Load champions</button>
+            <button type="button" data-action="items">Load items</button>
+            <label>
+              Players per rank
+              <input type="number" id="matchPlayersInput" min="1" max="100" value="2" />
+            </label>
+            <label>
+              Matches per player
+              <input type="number" id="matchesPerPlayerInput" min="1" max="50" value="2" />
+            </label>
+            <button type="button" data-action="matches">Load matches</button>
+          </div>
+
+          <form class="compact-form" id="compForm">
+            <label>
+              Limit
+              <input type="number" id="limitInput" min="1" max="50" value="10" />
+            </label>
+            <label>
+              Min. games
+              <input type="number" id="minGamesInput" min="1" max="100" value="3" />
+            </label>
+            <button type="submit">Refresh comps</button>
+          </form>
+        </aside>
+
+        <section class="main-grid">
+          <section class="ask-panel">
+            <div class="panel-head">
+              <h2>Ask TFT</h2>
+              <span id="askState">Ready</span>
+            </div>
+            <form id="askForm" class="ask-form">
+              <textarea
+                id="questionInput"
+                rows="4"
+                placeholder="Which comp should I play with Annie carry?"
+                required
+              ></textarea>
+              <button type="submit">Generate answer</button>
+            </form>
+            <pre id="answerOutput" class="answer-output">No question asked yet.</pre>
+          </section>
+
+          <section class="comps-panel">
+            <div class="panel-head">
+              <h2>Recommended Comps</h2>
+              <span id="compState">Ready</span>
+            </div>
+            <div id="compsList" class="comps-list"></div>
+          </section>
+        </section>
+      </section>
+    </main>
+
+    <script src="/static/app.js?v=20260517-4"></script>
+  </body>
+</html>

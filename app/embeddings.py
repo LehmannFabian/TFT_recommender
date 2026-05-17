@@ -1,32 +1,49 @@
-# app/embeddings.py
+import os
 
-from sentence_transformers import SentenceTransformer
+from dotenv import load_dotenv
+from google import genai
+from google.genai import types
 
 
-MODEL_NAME = "all-MiniLM-L6-v2"
+load_dotenv()
 
-model = SentenceTransformer(MODEL_NAME)
+DEFAULT_EMBEDDING_MODEL = "gemini-embedding-001"
+EMBEDDING_DIMENSIONS = 384
 
 
 def create_embedding(text: str) -> list[float]:
     """
-    creates embeddings out of text.
+    Create a 384-dimensional embedding using Gemini.
     """
 
-    embedding = model.encode(text)
+    api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
 
-    return embedding.tolist()
+    if not api_key:
+        raise RuntimeError(
+            "GEMINI_API_KEY is not configured. Add it to your .env file."
+        )
+
+    client = genai.Client(api_key=api_key)
+    response = client.models.embed_content(
+        model=os.getenv("GEMINI_EMBEDDING_MODEL", DEFAULT_EMBEDDING_MODEL),
+        contents=text,
+        config=types.EmbedContentConfig(
+            output_dimensionality=EMBEDDING_DIMENSIONS,
+        ),
+    )
+
+    return response.embeddings[0].values
 
 
 def create_champion_text(
-    set_nr:str,
+    set_nr: str,
     name: str,
     cost: int,
     traits: list[str],
-    ability: str
+    ability: str,
 ) -> str:
     """
-    creates text for champion§.
+    Create searchable text for a champion.
     """
 
     traits_text = ", ".join(traits)
@@ -41,10 +58,10 @@ def create_champion_text(
 def create_patch_note_text(
     patch_version: str,
     title: str,
-    content: str
+    content: str,
 ) -> str:
     """
-    creates text for patch note.
+    Create searchable text for a patch note.
     """
 
     return (
@@ -53,6 +70,7 @@ def create_patch_note_text(
         f"Content: {content}"
     )
 
+
 def create_item_text(
     name: str,
     description: str,
@@ -60,11 +78,11 @@ def create_item_text(
     composition: str,
 ) -> str:
     """
-    creates text for patch note.
+    Create searchable text for an item.
     """
 
     return (
-        f"The Item {name} has the following description: {description}. "
+        f"The item {name} has the following description: {description}. "
         f"It has the following stats: {stats}. "
         f"Its composition is {composition}. "
     )
